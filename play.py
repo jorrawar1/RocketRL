@@ -3,19 +3,19 @@
 Controls
   W           throttle (ramped while held)
   SPACE       full throttle (instant while held)
-  A / D       steer: commanded tilt (STAB AUG) or raw gimbal (MANUAL)
+  A / D       steer (meaning depends on SAS mode)
   S           cut throttle instantly
-  G           toggle STAB AUG (fly-by-wire attitude hold) / MANUAL
+  G           cycle SAS mode: DAMP -> HOLD -> MANUAL
   C           toggle CRT effects (phosphor + scanlines)
   V           toggle raycast display
   R           reset episode
   ESC         quit
 
-The keyboard drives a *flight computer* whose output is the same continuous
-[throttle, gimbal] action an agent would emit — the env code path is
-identical for human and agent.  STAB AUG closes an attitude loop for the
-human (real rockets are flown this way); MANUAL is the raw problem the RL
-agent will face.
+SAS modes (all emit plain continuous actions — same env path as the agent):
+  DAMP   (default) A/D command a turn rate; releasing kills the spin but
+         does NOT auto-level — you must right the rocket yourself.
+  HOLD   A/D command a tilt angle; releasing auto-levels (easy mode).
+  MANUAL raw gimbal — the exact control problem the RL agent faces.
 
 Rendering: the world is y-up; the y-flip to pygame's y-down screen happens
 only in world_to_screen().  No rendering code exists inside rocketenv.
@@ -37,7 +37,7 @@ from rocketenv import RocketEnv
 from rocketenv.physics import (
     FUEL, OMEGA, THETA, VX, VY, X, Y, body_endpoints, step_dynamics,
 )
-from rocketenv.reward import TOUCHDOWN
+from rocketenv.reward import TIPPED, TOUCHDOWN
 
 SCALE = 8                 # px per meter
 VIEW_W, VIEW_H = 800, 800  # world viewport (100 m x 100 m)
@@ -50,8 +50,8 @@ PREDICT_S = 4.0           # ballistic prediction horizon
 
 @dataclass(frozen=True)
 class Theme:
-    """Single dark instrument palette. Swapping colors later is trivial;
-    the aesthetic investment is in the phosphor/CRT presentation, not hue."""
+    """Dark instrument palette. Swapping colors later is trivial; the
+    aesthetic investment is in the phosphor/CRT presentation, not hue."""
     field: tuple = (8, 11, 16)        # near-black ink
     grid: tuple = (20, 26, 34)        # graticule
     struct: tuple = (58, 70, 84)      # terrain / chrome / labels
@@ -72,25 +72,27 @@ def world_to_screen(x, y):
 
 
 class FlightComputer:
-    """Keyboard -> continuous action.
+    """Keyboard -> continuous action, via one of three SAS modes."""
 
-    STAB AUG (default): A/D command a tilt angle; a PD loop flies the gimbal
-    and auto-levels when released.  MANUAL: A/D slew the gimbal directly —
-    the raw control problem the agent gets.  Either way the output is a
-    plain action inside the env's action space.
-    """
+    MODES = ("DAMP", "HOLD", "MANUAL")
 
     THROTTLE_UP = 4.0     # /s toward 1 while W held
     THROTTLE_DOWN = 5.0   # /s toward 0 when released
     GIMBAL_SLEW = 3.0     # manual: /s toward +/-1 while A/D held
     GIMBAL_SPRING = 6.0   # manual: /s back to center
-    TILT_CMD = 0.30       # rad, commanded tilt at full A/D in STAB AUG
-    KP, KD = 6.0, 3.0     # attitude loop gains
+    RATE_CMD = 0.7        # rad/s, commanded turn rate at full A/D (DAMP)
+    K_RATE = 3.0          # rate-loop gain (DAMP)
+    TILT_CMD = 0.30       # rad, commanded tilt at full A/D (HOLD)
+    KP, KD = 6.0, 3.0     # attitude loop gains (HOLD)
 
     def __init__(self):
-        self.assist = True
+        self.mode = "DAMP"
         self.throttle = 0.0
         self.gimbal = 0.0
+
+    def cycle_mode(self):
+        i = self.MODES.index(self.mode)
+        self.mode = self.MODES[(i + 1) % len(self.MODES)]
 
     def reset(self):
         self.throttle = 0.0
@@ -107,20 +109,23 @@ class FlightComputer:
             self.throttle = max(0.0, self.throttle - self.THROTTLE_DOWN * dt)
 
         steer = float(keys[pygame.K_d]) - float(keys[pygame.K_a])
-        if self.assist:
-            # commanded tilt: D -> lean right (theta < 0) -> translate +x
+        # positive gimbal -> negative torque, hence the leading minuses
+        if self.mode == "DAMP":
+            # D -> rotate clockwise (omega < 0) -> lean right -> translate +x
+            omega_des = -steer * self.RATE_CMD
+            self.gimbal = float(np.clip(
+                -self.K_RATE * (omega_des - state[OMEGA]), -1.0, 1.0))
+        elif self.mode == "HOLD":
             theta_des = -steer * self.TILT_CMD
             err = theta_des - state[THETA]
-            # positive gimbal -> negative torque, hence the leading minus
             self.gimbal = float(np.clip(
                 -(self.KP * err - self.KD * state[OMEGA]), -1.0, 1.0))
-        else:
+        else:  # MANUAL
             rate = self.GIMBAL_SLEW if steer != 0.0 else self.GIMBAL_SPRING
-            target = steer
-            if self.gimbal < target:
-                self.gimbal = min(target, self.gimbal + rate * dt)
-            elif self.gimbal > target:
-                self.gimbal = max(target, self.gimbal - rate * dt)
+            if self.gimbal < steer:
+                self.gimbal = min(steer, self.gimbal + rate * dt)
+            elif self.gimbal > steer:
+                self.gimbal = max(steer, self.gimbal - rate * dt)
 
     def action(self):
         return np.array([self.throttle, self.gimbal], dtype=np.float32)
@@ -134,7 +139,7 @@ def predict_ballistic(env):
     pts, impact = [], None
     for i in range(int(PREDICT_S * 60)):
         s = step_dynamics(s, zero, env.cfg)
-        if i % 6 == 0:
+        if i % 5 == 0:
             pts.append((s[X], s[Y]))
         base, tip = body_endpoints(s, env.cfg)
         if (base[1] <= env.terrain.height_at(base[0])
@@ -155,13 +160,53 @@ class Phosphor:
         self.surf.fill((0, 0, 0, 0))
 
     def decay(self):
-        self.surf.fill((0, 0, 0, 10), special_flags=pygame.BLEND_RGBA_SUB)
+        self.surf.fill((0, 0, 0, 8), special_flags=pygame.BLEND_RGBA_SUB)
 
     def line(self, a, b, color, alpha, width=1):
         pygame.draw.line(self.surf, (*color, alpha), a, b, width)
 
     def polygon(self, pts, color, alpha):
         pygame.draw.polygon(self.surf, (*color, alpha), pts, 1)
+
+
+class Debris:
+    """Render-only impact particles, drawn as fading streaks."""
+
+    LIFE = 1.0  # s
+
+    def __init__(self):
+        self.parts = []  # [x, y, vx, vy, age]
+
+    def clear(self):
+        self.parts = []
+
+    def burst(self, wx, wy, impact_speed):
+        n = min(28, 8 + int(impact_speed * 1.5))
+        for _ in range(n):
+            ang = random.uniform(math.radians(20), math.radians(160))
+            spd = random.uniform(0.25, 1.0) * max(4.0, impact_speed)
+            self.parts.append(
+                [wx, wy, spd * math.cos(ang), spd * math.sin(ang), 0.0])
+
+    def update_and_draw(self, screen, phosphor, dt, g):
+        alive = []
+        for p in self.parts:
+            p[4] += dt
+            if p[4] >= self.LIFE:
+                continue
+            p[3] -= g * dt
+            p[0] += p[2] * dt
+            p[1] += p[3] * dt
+            fade = 1.0 - p[4] / self.LIFE
+            a = world_to_screen(p[0], p[1])
+            b = world_to_screen(p[0] - p[2] * 0.05, p[1] - p[3] * 0.05)
+            pygame.draw.line(screen,
+                             lerp_color(THEME.field, THEME.signal, 0.3 + 0.6 * fade),
+                             a, b, 1)
+            if phosphor:
+                phosphor.line(a, b, THEME.signal, int(130 * fade), 2)
+            alive.append(p)
+        self.parts = alive
 
 
 def make_scanlines(w, h):
@@ -224,6 +269,7 @@ class Console:
         names = "consolas, cascadia mono, jetbrains mono, courier new"
         self.f_num = pygame.font.SysFont(names, 16)
         self.f_lab = pygame.font.SysFont(names, 13)
+        self.f_tiny = pygame.font.SysFont(names, 11)
         self.f_stamp = pygame.font.SysFont(names, 20, bold=True)
 
     def text(self, font, s, color, x, y, right_align=False):
@@ -241,6 +287,13 @@ class Console:
         for gy in range(0, int(cfg.world_h) + 1, 10):
             _, sy = world_to_screen(0, gy)
             pygame.draw.line(self.screen, THEME.grid, (0, sy), (VIEW_W, sy))
+        # numbered survey ticks: altitude up the left edge, x along the ground
+        for gy in range(20, int(cfg.world_h), 20):
+            _, sy = world_to_screen(0, gy)
+            self.text(self.f_tiny, f"{gy}", THEME.struct, 4, sy - 6)
+        for gx in range(20, int(cfg.world_w), 20):
+            sx, sy = world_to_screen(gx, 0)
+            self.text(self.f_tiny, f"{gx}", THEME.struct, sx + 3, sy + 4)
 
     def draw_terrain(self, env):
         cfg = env.cfg
@@ -267,21 +320,39 @@ class Console:
         self.text(self.f_lab, f"PAD {2 * cfg.pad_half_w:.0f} M",
                   THEME.struct, cx + 12, ly - 18)
 
+    def draw_touchdown_ring(self, env, age):
+        """Expanding survey brackets sweeping outward from the pad edges."""
+        if age > 1.0:
+            return
+        cfg = env.cfg
+        pad_y = env.terrain.height_at(cfg.pad_x)
+        cx, cy = world_to_screen(cfg.pad_x, pad_y)
+        spread = int(cfg.pad_half_w * SCALE + age * 60)
+        fade = 1.0 - age
+        color = lerp_color(THEME.field, THEME.signal, 0.2 + 0.8 * fade)
+        for sgn in (-1, 1):
+            ex = cx + sgn * spread
+            pygame.draw.line(self.screen, color, (ex, cy), (ex, cy - 12), 1)
+            pygame.draw.line(self.screen, color, (ex, cy), (ex - sgn * 6, cy), 1)
+
     def draw_trail(self, trail):
         n = len(trail)
         for i in range(1, n):
             t = i / n  # 0 = oldest, 1 = newest
-            color = lerp_color(THEME.field, THEME.signal, 0.08 + 0.55 * t * t)
-            pygame.draw.line(self.screen, color,
-                             world_to_screen(*trail[i - 1]),
-                             world_to_screen(*trail[i]), 1)
+            a = world_to_screen(*trail[i - 1])
+            b = world_to_screen(*trail[i])
+            halo = lerp_color(THEME.field, THEME.signal, 0.04 + 0.22 * t * t)
+            pygame.draw.line(self.screen, halo, a, b, 3)
+            core = lerp_color(THEME.field, THEME.signal, 0.10 + 0.65 * t * t)
+            pygame.draw.line(self.screen, core, a, b, 1)
 
-    def draw_prediction(self, pts, impact):
-        dim = lerp_color(THEME.field, THEME.signal, 0.30)
-        for wx, wy in pts:
+    def draw_prediction(self, pts, impact, tick):
+        dim = lerp_color(THEME.field, THEME.signal, 0.45)
+        for i, (wx, wy) in enumerate(pts):
+            if (i + tick // 4) % 3 == 0:  # marching dashes: the arc is alive
+                continue
             px, py = world_to_screen(wx, wy)
             if 0 <= px < VIEW_W and 0 <= py < VIEW_H:
-                pygame.draw.line(self.screen, dim, (px, py), (px, py), 1)
                 pygame.draw.line(self.screen, dim, (px - 1, py), (px + 1, py), 1)
         if impact is not None:
             wx, wy, speed = impact
@@ -326,8 +397,13 @@ class Console:
         pygame.draw.polygon(self.screen, THEME.signal, corners, 1)
         pygame.draw.line(self.screen, lerp_color(THEME.field, THEME.signal, 0.35),
                          world_to_screen(*base), world_to_screen(*tip), 1)
+        # landing legs: two struts splayed to the leg base half-width
+        for sgn in (-1, 1):
+            leg_top = pt(bx, by, 0.7, sgn * w)
+            leg_foot = pt(bx, by, -0.15, sgn * cfg.leg_half_w)
+            pygame.draw.line(self.screen, THEME.signal, leg_top, leg_foot, 1)
         if phosphor:  # ghost copy -> motion smear on the decay layer
-            phosphor.polygon(corners, THEME.signal, 30)
+            phosphor.polygon(corners, THEME.signal, 45)
 
         throttle, gimbal_cmd = float(action[0]), float(action[1])
         phi = gimbal_cmd * cfg.phi_max
@@ -339,28 +415,38 @@ class Console:
                          world_to_screen(bx, by), world_to_screen(*nz), 2)
 
         if throttle > 0.01 and s[FUEL] > 0:
-            length = 7.0 * throttle * cfg.thrust_multiplier
-            hx, hy = bx + ex_dir[0] * length, by + ex_dir[1] * length
+            perp = (-ex_dir[1], ex_dir[0])
+            length = 7.5 * throttle * cfg.thrust_multiplier
+
+            # geometric plume: bright core + flickering side streaks
+            flick = random.uniform(0.85, 1.15)
+            core_len = length * flick
             a0 = world_to_screen(bx + ex_dir[0] * 0.9, by + ex_dir[1] * 0.9)
-            a1 = world_to_screen(hx, hy)
-            pygame.draw.line(self.screen, THEME.signal, a0, a1, 1)
-            ang = math.atan2(a1[1] - a0[1], a1[0] - a0[0])
-            for da in (2.6, -2.6):
-                pygame.draw.line(self.screen, THEME.signal, a1,
-                                 (a1[0] + 6 * math.cos(ang + da),
-                                  a1[1] + 6 * math.sin(ang + da)), 1)
-            if phosphor:  # jittered exhaust streaks, render-only randomness
-                perp = (-ex_dir[1], ex_dir[0])
-                for _ in range(3):
+            a1 = world_to_screen(bx + ex_dir[0] * core_len,
+                                 by + ex_dir[1] * core_len)
+            pygame.draw.line(self.screen, THEME.signal, a0, a1, 2)
+            for side in (-1, 1):
+                j = side * 0.35
+                b0 = world_to_screen(bx + ex_dir[0] * 0.9 + perp[0] * j,
+                                     by + ex_dir[1] * 0.9 + perp[1] * j)
+                b1 = world_to_screen(
+                    bx + ex_dir[0] * core_len * 0.55 + perp[0] * j * 0.4,
+                    by + ex_dir[1] * core_len * 0.55 + perp[1] * j * 0.4)
+                pygame.draw.line(
+                    self.screen,
+                    lerp_color(THEME.field, THEME.signal, 0.55), b0, b1, 1)
+
+            if phosphor:  # hot exhaust streaks smearing on the decay layer
+                for _ in range(4):
                     j = random.uniform(-0.5, 0.5)
-                    frac = random.uniform(0.5, 1.1)
+                    frac = random.uniform(0.6, 1.3)
                     sx = bx + ex_dir[0] * 0.9 + perp[0] * j
                     sy = by + ex_dir[1] * 0.9 + perp[1] * j
                     exx = sx + ex_dir[0] * length * frac
                     exy = sy + ex_dir[1] * length * frac
                     phosphor.line(world_to_screen(sx, sy),
                                   world_to_screen(exx, exy),
-                                  THEME.signal, 46, 2)
+                                  THEME.signal, 95, 3)
 
     # ------------------------------------------------------------- telemetry
     def bar(self, x, y, w, h, frac, color):
@@ -370,7 +456,7 @@ class Console:
             pygame.draw.rect(self.screen, color, (x + 1, y + 1, fill, h - 2))
 
     def draw_panel(self, env, action, ep_reward, t_sim, seed, fuel_out,
-                   charts, log, assist):
+                   charts, log, sas_mode):
         cfg, s = env.cfg, env.state
         x0 = VIEW_W + 24
         xr = WIN_W - 24
@@ -378,8 +464,8 @@ class Console:
 
         y = 18
         self.text(self.f_lab, "ROCKET GNC — FLIGHT CONSOLE", THEME.struct, x0, y)
-        self.text(self.f_lab, "STAB AUG" if assist else "MANUAL",
-                  THEME.signal, xr, y, right_align=True)
+        self.text(self.f_lab, f"SAS {sas_mode}", THEME.signal, xr, y,
+                  right_align=True)
         y += 24
 
         alt = s[Y] - cfg.L - env.terrain.height_at(s[X])
@@ -459,7 +545,7 @@ class Console:
                   "W THROTTLE   A/D STEER   S CUT   SPACE MAX",
                   THEME.struct, x0, WIN_H - 40)
         self.text(self.f_lab,
-                  "G STAB AUG   C CRT   V RAYS   R RESET   ESC QUIT",
+                  "G SAS MODE   C CRT   V RAYS   R RESET   ESC QUIT",
                   THEME.struct, x0, WIN_H - 22)
 
     def draw_stamp(self, text, fault=False):
@@ -481,6 +567,9 @@ def stamp_for(outcome, state, cfg):
         fuel_pct = 100.0 * state[FUEL] / cfg.fuel_0
         return (f"TOUCHDOWN — VY {abs(state[VY]):.1f} M/S · "
                 f"VX {abs(state[VX]):.1f} M/S · FUEL {fuel_pct:.0f}%", False)
+    if outcome == TIPPED:
+        return (f"TIP-OVER — LATERAL {abs(state[VX]):.1f} M/S · "
+                f"TILT {abs(math.degrees(state[THETA])):.0f}°", True)
     if outcome == "OUT OF BOUNDS":
         return "OUT OF BOUNDS — CONTACT LOST", True
     impact = math.hypot(state[VX], state[VY])
@@ -502,6 +591,7 @@ def main():
     clock = pygame.time.Clock()
     console = Console(screen)
     phosphor = Phosphor((VIEW_W, VIEW_H))
+    debris = Debris()
     scanlines = make_scanlines(WIN_W, WIN_H)
     crt_on = True
 
@@ -514,12 +604,14 @@ def main():
 
     ep_reward = t_sim = end_timer = 0.0
     ended, stamp, trail = False, None, deque(maxlen=360)
+    landed = False
     ignited = False
     fuel_marks: set[int] = set()
+    tick = 0
 
     def new_episode():
         nonlocal ep_reward, t_sim, ended, end_timer, stamp, trail, seed
-        nonlocal ignited, fuel_marks
+        nonlocal ignited, fuel_marks, landed
         seed += 1
         env.reset(seed=seed)
         fc.reset()
@@ -527,9 +619,11 @@ def main():
             c.reset()
         log.reset()
         phosphor.clear()
+        debris.clear()
         trail = deque(maxlen=360)
         ep_reward, t_sim = 0.0, 0.0
         ended, end_timer, stamp = False, 0.0, None
+        landed = False
         ignited = False
         fuel_marks = set()
         log.post(0.0, f"GUIDANCE ACTIVE — SEED {seed}")
@@ -540,6 +634,7 @@ def main():
     running = True
     while running:
         dt = env.cfg.dt
+        tick += 1
         for ev in pygame.event.get():
             if ev.type == pygame.QUIT:
                 running = False
@@ -553,9 +648,8 @@ def main():
                 elif ev.key == pygame.K_c:
                     crt_on = not crt_on
                 elif ev.key == pygame.K_g:
-                    fc.assist = not fc.assist
-                    log.post(t_sim,
-                             "STAB AUG ENGAGED" if fc.assist else "MANUAL CONTROL")
+                    fc.cycle_mode()
+                    log.post(t_sim, f"SAS {fc.mode}")
 
         keys = pygame.key.get_pressed()
         if not ended:
@@ -588,6 +682,11 @@ def main():
                 else:
                     stamp = stamp_for(outcome, info["state"], env.cfg)
                 log.post(t_sim, stamp[0], fault=stamp[1])
+                landed = outcome == TOUCHDOWN
+                if outcome in (TIPPED, "LOSS OF VEHICLE"):
+                    s = info["state"]
+                    debris.burst(s[X], max(s[Y] - env.cfg.L, 0.2),
+                                 math.hypot(s[VX], s[VY]))
         else:
             action = np.zeros(2, dtype=np.float32)
             end_timer += dt
@@ -603,17 +702,20 @@ def main():
         console.draw_trail(list(trail))
         if not ended:
             pts, impact = predict_ballistic(env)
-            console.draw_prediction(pts, impact)
+            console.draw_prediction(pts, impact, tick)
         if show_rays and not ended:
             console.draw_rays(env)
         if crt_on:
             phosphor.decay()
         console.draw_rocket(env, action, ph)
+        debris.update_and_draw(screen, ph, dt, env.cfg.g)
+        if ended and landed:
+            console.draw_touchdown_ring(env, end_timer)
         if crt_on:
             screen.blit(phosphor.surf, (0, 0))
         fuel_out = env.state[FUEL] <= 0.0
         console.draw_panel(env, action, ep_reward, t_sim, seed, fuel_out,
-                           charts, log, fc.assist)
+                           charts, log, fc.mode)
         if ended and stamp:
             console.draw_stamp(*stamp)
         if crt_on:

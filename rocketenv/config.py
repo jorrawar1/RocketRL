@@ -89,13 +89,14 @@ class Config:
     att_c_omega: float = 0.03
     att_alt: float = 25.0           # m, penalty fully on below (att_alt - att_fade)
     att_fade: float = 10.0          # m, linear fade band up to att_alt
-    # Soft-landing thresholds. Calibrated against real touchdowns: gentle
-    # on-pad contacts (impact < 2 m/s) were failing only the original
-    # omega < 0.5 / theta < 10 deg limits, which read as unfair.
-    land_vy_max: float = 2.0        # m/s
-    land_vx_max: float = 2.0
-    land_theta_max: float = math.radians(15.0)
-    land_omega_max: float = 1.0     # rad/s
+    # Landing model: legs absorb a hard vertical hit, but the rocket must
+    # also not TIP OVER — an energy check (reward.sticks_upright) compares
+    # lateral speed + spin + tilt against the barrier of rotating the CoM
+    # over a leg.  Rewards decisive suicide-burn landings; punishes arriving
+    # sideways or spinning.
+    leg_half_w: float = 1.5         # m, leg base half-width (tip-over pivot)
+    land_vy_max: float = 5.0        # m/s, max vertical impact the legs absorb
+    land_vx_max: float = 3.5        # m/s, max lateral shear the legs survive
     reward_land: float = 100.0
     reward_fuel_bonus: float = 20.0  # * fuel_frac on soft landing
     reward_crash: float = -100.0

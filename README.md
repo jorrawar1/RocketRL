@@ -22,9 +22,9 @@ unchanged; it's used here for prompt Python 3.14 wheel support.)
 |---|---|
 | `W` | throttle (ramps while held) |
 | `Space` | full throttle (instant) |
-| `A` / `D` | steer — commanded tilt (STAB AUG) or raw gimbal (MANUAL) |
+| `A` / `D` | steer (meaning depends on SAS mode) |
 | `S` | cut throttle instantly |
-| `G` | toggle STAB AUG / MANUAL |
+| `G` | cycle SAS mode: DAMP → HOLD → MANUAL |
 | `C` | toggle CRT effects (phosphor decay + scanlines) |
 | `V` | toggle raycast display |
 | `R` | reset episode |
@@ -32,15 +32,21 @@ unchanged; it's used here for prompt Python 3.14 wheel support.)
 
 The keyboard drives a *flight computer* whose output is the same continuous
 `[throttle, gimbal]` action an agent would emit — identical env code path
-for human and agent. **STAB AUG** (default) closes an attitude loop: A/D
-command a lean angle, release to auto-level. **MANUAL** is the raw gimbal —
-the exact control problem the RL agent gets. The faint dotted arc is the
-ballistic prediction (where you go if you cut thrust now), with the
-predicted impact point and speed marked.
+for human and agent. SAS modes: **DAMP** (default) — A/D command a turn
+rate, releasing kills the spin but does *not* auto-level; **HOLD** — A/D
+command a lean angle, releasing auto-levels (easy mode); **MANUAL** — raw
+gimbal, the exact control problem the RL agent gets. The dotted arc is the
+ballistic prediction (where you go if you cut thrust now), with predicted
+impact point and speed marked.
 
-Goal: touch down on the pad with `|vy| < 2`, `|vx| < 2`, tilt `< 15°`,
-`|ω| < 1`. Gimbal torque is proportional to thrust — at zero throttle you
-have **no attitude control**. That's the game.
+**Landing model:** the legs absorb a hard *vertical* hit (up to 5 m/s — a
+decisive suicide burn is a valid, fuel-efficient landing), but the rocket
+**tips over** if it arrives with too much lateral speed, spin, or tilt: a
+tip-over energy check compares rotational energy about the downhill leg
+against the barrier of rotating the CoM over it (`reward.sticks_upright`).
+Kill your drift and stay upright; you don't have to feather it. Gimbal
+torque is proportional to thrust — at zero throttle you have **no attitude
+control**. That's the game.
 
 ## Conventions (load-bearing)
 
