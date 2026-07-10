@@ -33,7 +33,7 @@ from dataclasses import dataclass
 import numpy as np
 import pygame
 
-from rocketenv import RocketEnv
+from rocketenv import FlatTerrain, RocketEnv, generate_terrain
 from rocketenv.physics import (
     FUEL, OMEGA, THETA, VX, VY, X, Y, body_endpoints, step_dynamics,
 )
@@ -327,11 +327,6 @@ class Console:
             if y0w < gy < y1w:
                 _, sy = world_to_screen(0, gy)
                 self.text(self.f_tiny, f"{gy}", THEME.struct, 4, sy - 6)
-        for gx in range(10, int(cfg.world_w), 10):
-            if x0w < gx < x1w:
-                sx, sy = world_to_screen(gx, 0)
-                if sy < VIEW_H - 6:
-                    self.text(self.f_tiny, f"{gx}", THEME.struct, sx + 3, sy + 4)
 
     def draw_corridor(self, env):
         """ILS-style approach cone: dashed beam edges rising from the pad,
@@ -401,8 +396,18 @@ class Console:
     def draw_terrain(self, env):
         cfg = env.cfg
         pts = [world_to_screen(x, env.terrain.height_at(x))
-               for x in range(0, int(cfg.world_w) + 1, 2)]
+               for x in range(0, int(cfg.world_w) + 1, 1)]
+        # faint fill below the profile grounds the scene without texture
+        fill = pts + [(pts[-1][0], VIEW_H + 4), (pts[0][0], VIEW_H + 4)]
+        pygame.draw.polygon(self.screen, lerp_color(THEME.field, THEME.struct, 0.14),
+                            fill)
         pygame.draw.lines(self.screen, THEME.struct, False, pts, 1)
+        # x survey labels, on top of the fill at the frame bottom
+        x0w, x1w, _, _ = CAMERA.visible()
+        for gx in range(10, int(cfg.world_w), 10):
+            if x0w < gx < x1w:
+                sx, _ = world_to_screen(gx, 0)
+                self.text(self.f_tiny, f"{gx}", THEME.struct, sx + 3, VIEW_H - 14)
 
     def draw_pad(self, env, phosphor):
         cfg = env.cfg
@@ -560,7 +565,7 @@ class Console:
             pygame.draw.rect(self.screen, color, (x + 1, y + 1, fill, h - 2))
 
     def draw_panel(self, env, action, ep_reward, t_sim, seed, fuel_out,
-                   charts, log, sas_mode):
+                   charts, log, sas_mode, map_name):
         cfg, s = env.cfg, env.state
         x0 = VIEW_W + 24
         xr = WIN_W - 24
@@ -576,6 +581,7 @@ class Console:
         tilt = math.degrees(s[THETA])
         rows = [
             ("T+", f"{t_sim:6.2f} S"),
+            ("MAP", map_name),
             ("SEED", f"{seed}"),
             ("ALT", f"{alt:7.2f} M"),
             ("VX", f"{s[VX]:+7.2f} M/S"),
@@ -655,7 +661,7 @@ class Console:
                   "W THROTTLE   A/D STEER   S CUT   SPACE MAX",
                   THEME.struct, x0, WIN_H - 40)
         self.text(self.f_lab,
-                  "G SAS MODE   C CRT   V RAYS   R RESET   ESC QUIT",
+                  "G SAS   M/F MAP   C CRT   V RAYS   R RESET   ESC QUIT",
                   THEME.struct, x0, WIN_H - 22)
 
     def draw_stamp(self, text, fault=False):
@@ -686,6 +692,15 @@ def stamp_for(outcome, state, cfg):
     return f"LOSS OF VEHICLE — IMPACT {impact:.1f} M/S", True
 
 
+def load_map(idx, cfg):
+    """Map 0 is the flat pad; higher indices are deterministic generated
+    maps (same index = same terrain, always)."""
+    if idx == 0:
+        return FlatTerrain(), None, "FLAT"
+    terr, pad_x = generate_terrain(np.random.default_rng(idx), cfg)
+    return terr, pad_x, f"GEN-{idx:02d}"
+
+
 def main():
     # Opt out of Windows DPI virtualization: without this the window is
     # bitmap-stretched at >100% display scaling and all text goes soft.
@@ -708,6 +723,8 @@ def main():
     env = RocketEnv()
     fc = FlightComputer()
     seed = random.SystemRandom().randrange(10_000)
+    map_idx = 0
+    terrain_obj, map_pad, map_name = load_map(map_idx, env.base_config)
     charts = [StripChart("ALT M", 0.0, 100.0),
               StripChart("VY M/S", -25.0, 25.0, zero_line=True)]
     log = EventLog()
@@ -723,7 +740,9 @@ def main():
         nonlocal ep_reward, t_sim, ended, end_timer, stamp, trail, seed
         nonlocal ignited, fuel_marks, landed
         seed += 1
-        env.reset(seed=seed)
+        env.terrain = terrain_obj
+        opts = {"pad_x": map_pad} if map_pad is not None else None
+        env.reset(seed=seed, options=opts)
         fc.reset()
         for c in charts:
             c.reset()
@@ -736,7 +755,7 @@ def main():
         landed = False
         ignited = False
         fuel_marks = set()
-        log.post(0.0, f"GUIDANCE ACTIVE — SEED {seed}")
+        log.post(0.0, f"GUIDANCE ACTIVE — {map_name} SEED {seed}")
 
     show_rays = False  # dimension callouts carry that info now; V re-enables
     new_episode()
@@ -760,6 +779,11 @@ def main():
                 elif ev.key == pygame.K_g:
                     fc.cycle_mode()
                     log.post(t_sim, f"SAS {fc.mode}")
+                elif ev.key in (pygame.K_m, pygame.K_f):
+                    map_idx = 0 if ev.key == pygame.K_f else map_idx + 1
+                    terrain_obj, map_pad, map_name = load_map(
+                        map_idx, env.base_config)
+                    new_episode()
 
         keys = pygame.key.get_pressed()
         if not ended:
@@ -788,7 +812,8 @@ def main():
                 ended, end_timer = True, 0.0
                 outcome = info.get("outcome", "TIMEOUT")
                 if outcome == "TIMEOUT":
-                    stamp = ("EPISODE TIMEOUT — 20.0 S", True)
+                    t_lim = env.cfg.max_steps * env.cfg.dt
+                    stamp = (f"EPISODE TIMEOUT — {t_lim:.0f} S", True)
                 else:
                     stamp = stamp_for(outcome, info["state"], env.cfg)
                 log.post(t_sim, stamp[0], fault=stamp[1])
@@ -828,7 +853,7 @@ def main():
             screen.blit(phosphor.surf, (0, 0))
         fuel_out = env.state[FUEL] <= 0.0
         console.draw_panel(env, action, ep_reward, t_sim, seed, fuel_out,
-                           charts, log, fc.mode)
+                           charts, log, fc.mode, map_name)
         if ended and stamp:
             console.draw_stamp(*stamp)
         if crt_on:

@@ -25,6 +25,7 @@ unchanged; it's used here for prompt Python 3.14 wheel support.)
 | `A` / `D` | steer (meaning depends on SAS mode) |
 | `S` | cut throttle instantly |
 | `G` | cycle SAS mode: DAMP → HOLD → MANUAL |
+| `M` | next generated map (`F` returns to the flat map) |
 | `C` | toggle CRT effects (phosphor decay + scanlines) |
 | `V` | toggle raycast display (off by default) |
 | `R` | reset episode |
@@ -79,7 +80,7 @@ control**. That's the game.
 rocketenv/
   config.py    all constants; per-episode overrides; JSON export for TS port
   physics.py   pure step_dynamics(state, action, cfg) -> state
-  terrain.py   Terrain interface + FlatTerrain (polyline drops in later)
+  terrain.py   Terrain interface, FlatTerrain, PolylineTerrain + generator
   reward.py    isolated reward: shaping + attitude + graded terminal
   env.py       RocketEnv (Gymnasium API)
 play.py        pygame harness — ALL rendering lives here
@@ -100,6 +101,17 @@ env.reset(seed=0, options={"g": 1.62, "wind_x": 2.0, "thrust_multiplier": 0.7})
 
 Reserved no-op axes already in the physics: `drag_coeff` (quadratic),
 `wind_gust_x`, `thrust_multiplier`.
+
+## Terrain / maps
+
+`terrain.generate_terrain(rng, cfg)` builds seeded rolling-hills polyline
+maps with the landing pad carved flat into them (same rng seed = same map,
+always). In the harness, `M` cycles deterministic maps `GEN-01, GEN-02, …`
+and `F` returns to `FLAT`; the pad, reward shaping, corridor, prediction
+arc, and raycasts all follow the generated pad location automatically.
+Generation knobs in config: `terrain_amp` (max hill height), `terrain_res`
+(vertex spacing). Episodes are 30 s — sized so a traverse-and-land flight
+on a far pad fits; fuel is the binding constraint, not the clock.
 
 Export the exact constants for the future TypeScript port:
 

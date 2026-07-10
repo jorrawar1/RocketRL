@@ -55,8 +55,12 @@ class Config:
     thrust_multiplier: float = 1.0  # reserved for engine failure
 
     # --- pad ----------------------------------------------------------------
-    pad_x: float = 50.0             # m, pad center
+    pad_x: float = 50.0             # m, pad center (overridden per map)
     pad_half_w: float = 5.0         # m
+
+    # --- procedural terrain (terrain.generate_terrain) -----------------------
+    terrain_amp: float = 22.0       # m, max hill height
+    terrain_res: float = 4.0        # m, polyline vertex spacing
 
     # --- spawn envelope (uniform ranges, seeded RNG) -------------------------
     spawn_y_lo: float = 80.0
@@ -67,7 +71,10 @@ class Config:
     spawn_omega_max: float = 0.1    # rad/s
 
     # --- episode -------------------------------------------------------------
-    max_steps: int = 1200           # 20 s @ 60 Hz -> truncation (never termination)
+    # 30 s @ 60 Hz -> truncation (never termination). Sized so that a sound
+    # traverse-and-land flight on a far-pad terrain map fits with margin;
+    # fuel (~23 s of hover) is the binding constraint, not the clock.
+    max_steps: int = 1800
 
     # --- observation ----------------------------------------------------------
     n_rays: int = 5
