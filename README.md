@@ -20,9 +20,11 @@ unchanged; it's used here for prompt Python 3.14 wheel support.)
 
 | Key | Action |
 |---|---|
-| `↑` | throttle (ramps while held) |
+| `W` | throttle (ramps while held) |
 | `Space` | full throttle (instant) |
-| `←` / `→` | gimbal (ramps, springs back to center) |
+| `A` / `D` | gimbal (ramps, springs back to center) |
+| `S` | cut throttle instantly |
+| `T` | cycle visual theme (scope amber / blueprint / paper) |
 | `V` | toggle raycast display |
 | `R` | reset episode |
 | `Esc` | quit |
@@ -88,8 +90,11 @@ DEFAULT_CONFIG.dump_json("constants.json")
 
 ## Tuning
 
-Difficulty knobs live in `rocketenv/config.py`: `twr` (keep 1.5–2.0),
-`fuel_0` / `burn_rate`, spawn envelope (`spawn_*`), pad width. Reward
+Difficulty knobs live in `rocketenv/config.py`: `twr` (2.3 — raised from the
+spec's 1.8 after playtesting showed free-fall recovery felt impossible),
+`phi_max` (10° — lowered from 15° to tame attitude twitchiness),
+`fuel_0` / `burn_rate`, spawn envelope (`spawn_*`), pad width. Stick feel
+(ramp/spring rates) lives at the top of `VirtualStick` in `play.py`. Reward
 coefficients are all `Config` fields too — tune while watching the live
 reward readout in the harness. A scripted P-controller lands 100/100 seeds
 with the defaults (avg impact ~1.2 m/s, ~20% fuel margin), so the task is

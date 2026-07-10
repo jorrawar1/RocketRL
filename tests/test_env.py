@@ -133,6 +133,7 @@ def test_config_json_dump(tmp_path):
     p = tmp_path / "constants.json"
     Config().dump_json(str(p))
     d = json.loads(p.read_text())
+    cfg = Config()
     assert d["dt"] == pytest.approx(1 / 60)
-    assert d["T_max"] == pytest.approx(1.8 * 9.81)
-    assert d["I"] == pytest.approx(16 / 12)
+    assert d["T_max"] == pytest.approx(cfg.twr * cfg.m * cfg.g)
+    assert d["I"] == pytest.approx(cfg.m * cfg.H**2 / 12)

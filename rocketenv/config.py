@@ -37,11 +37,14 @@ class Config:
 
     # --- rocket ------------------------------------------------------------
     m: float = 1.0                  # kg, constant in v1 (fuel is massless)
-    twr: float = 1.8                # thrust-to-weight at full throttle
+    # TWR 1.8 felt too weak to arrest a free fall (human feedback 2026-07-09);
+    # 2.3 recovers a 2 s fall in ~1.5 s. Difficulty held via burn_rate instead.
+    twr: float = 2.3                # thrust-to-weight at full throttle
     H: float = 4.0                  # m, rocket height (inertia / moment arm)
-    phi_max: float = math.radians(15.0)  # rad, max gimbal deflection
+    # 10 deg (was 15) tames twitchy attitude control at the higher TWR.
+    phi_max: float = math.radians(10.0)  # rad, max gimbal deflection
     fuel_0: float = 100.0           # starting fuel
-    burn_rate: float = 10.0         # fuel/s at full throttle
+    burn_rate: float = 12.0         # fuel/s at full throttle
 
     # --- reserved randomization axes (no-op defaults; Phase 3) --------------
     drag_coeff: float = 0.0         # quadratic drag: F = -c * |v| * v
