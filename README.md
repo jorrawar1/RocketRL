@@ -26,7 +26,7 @@ unchanged; it's used here for prompt Python 3.14 wheel support.)
 | `S` | cut throttle instantly |
 | `G` | cycle SAS mode: DAMP → HOLD → MANUAL |
 | `C` | toggle CRT effects (phosphor decay + scanlines) |
-| `V` | toggle raycast display |
+| `V` | toggle raycast display (off by default) |
 | `R` | reset episode |
 | `Esc` | quit |
 
@@ -38,6 +38,13 @@ command a lean angle, releasing auto-levels (easy mode); **MANUAL** — raw
 gimbal, the exact control problem the RL agent gets. The dotted arc is the
 ballistic prediction (where you go if you cut thrust now), with predicted
 impact point and speed marked.
+
+**Presentation** (all instrument heritage, not HUD decoration): the camera
+zooms in smoothly for final approach (vector *Lunar Lander* style); an
+ILS-style dashed corridor rises from the pad; drafting-style dimension
+lines annotate altitude and lateral offset below 25 m; the panel carries an
+Apollo LM cross-pointer (both needles centered = safe to land) beside the
+attitude ball.
 
 **Landing model:** the legs absorb a hard *vertical* hit (up to 5 m/s — a
 decisive suicide burn is a valid, fuel-efficient landing), but the rocket

@@ -66,9 +66,41 @@ def lerp_color(a, b, t):
     return tuple(int(a[i] + (b[i] - a[i]) * t) for i in range(3))
 
 
+class Camera:
+    """Smooth follow-zoom, vector Lunar Lander heritage: full-world view up
+    high, ~2.2x close-up on final approach so touchdown reads large.
+    Phosphor stays screen-space on purpose — real CRT afterglow is."""
+
+    def __init__(self):
+        self.cx, self.cy, self.s = 50.0, 45.0, float(SCALE)
+
+    def to_screen(self, x, y):
+        return (int(VIEW_W / 2 + (x - self.cx) * self.s),
+                int(VIEW_H / 2 - (y - self.cy) * self.s))
+
+    def visible(self):
+        hw, hh = VIEW_W / (2 * self.s), VIEW_H / (2 * self.s)
+        return self.cx - hw, self.cx + hw, self.cy - hh, self.cy + hh
+
+    def update(self, env, dt):
+        alt = env.state[Y]
+        z = float(np.interp(alt, [8.0, 45.0], [2.25, 1.0]))
+        s_t = SCALE * z
+        hw, hh = VIEW_W / (2 * s_t), VIEW_H / (2 * s_t)
+        cx_t = min(max(env.state[X], hw), env.cfg.world_w - hw)
+        cy_t = hh * 0.9  # keeps the ground a fixed margin above frame bottom
+        k = min(1.0, 3.0 * dt)
+        self.s += (s_t - self.s) * k
+        self.cx += (cx_t - self.cx) * k
+        self.cy += (cy_t - self.cy) * k
+
+
+CAMERA = Camera()
+
+
 def world_to_screen(x, y):
-    """The ONLY place y flips."""
-    return int(x * SCALE), int(VIEW_H - y * SCALE)
+    """The ONLY place y flips (through the camera)."""
+    return CAMERA.to_screen(x, y)
 
 
 class FlightComputer:
@@ -281,19 +313,90 @@ class Console:
 
     # ------------------------------------------------------------ world view
     def draw_graticule(self, cfg):
+        x0w, x1w, y0w, y1w = CAMERA.visible()
         for gx in range(0, int(cfg.world_w) + 1, 10):
-            sx, _ = world_to_screen(gx, 0)
-            pygame.draw.line(self.screen, THEME.grid, (sx, 0), (sx, VIEW_H))
+            if x0w - 10 < gx < x1w + 10:
+                sx, _ = world_to_screen(gx, 0)
+                pygame.draw.line(self.screen, THEME.grid, (sx, 0), (sx, VIEW_H))
         for gy in range(0, int(cfg.world_h) + 1, 10):
-            _, sy = world_to_screen(0, gy)
-            pygame.draw.line(self.screen, THEME.grid, (0, sy), (VIEW_W, sy))
+            if y0w - 10 < gy < y1w + 10:
+                _, sy = world_to_screen(0, gy)
+                pygame.draw.line(self.screen, THEME.grid, (0, sy), (VIEW_W, sy))
         # numbered survey ticks: altitude up the left edge, x along the ground
-        for gy in range(20, int(cfg.world_h), 20):
-            _, sy = world_to_screen(0, gy)
-            self.text(self.f_tiny, f"{gy}", THEME.struct, 4, sy - 6)
-        for gx in range(20, int(cfg.world_w), 20):
-            sx, sy = world_to_screen(gx, 0)
-            self.text(self.f_tiny, f"{gx}", THEME.struct, sx + 3, sy + 4)
+        for gy in range(10, int(cfg.world_h), 10):
+            if y0w < gy < y1w:
+                _, sy = world_to_screen(0, gy)
+                self.text(self.f_tiny, f"{gy}", THEME.struct, 4, sy - 6)
+        for gx in range(10, int(cfg.world_w), 10):
+            if x0w < gx < x1w:
+                sx, sy = world_to_screen(gx, 0)
+                if sy < VIEW_H - 6:
+                    self.text(self.f_tiny, f"{gx}", THEME.struct, sx + 3, sy + 4)
+
+    def draw_corridor(self, env):
+        """ILS-style approach cone: dashed beam edges rising from the pad,
+        with a sparser dashed centerline. Fly inside the beam."""
+        cfg = env.cfg
+        pad_y = env.terrain.height_at(cfg.pad_x)
+        edge = lerp_color(THEME.grid, THEME.struct, 0.55)
+        center = lerp_color(THEME.grid, THEME.struct, 0.35)
+        ang = math.radians(18.0)
+        for sgn in (-1, 1):
+            dx_, dy_ = math.sin(ang) * sgn, math.cos(ang)
+            t = 3.0
+            while t < 55.0:
+                a = world_to_screen(cfg.pad_x + dx_ * t, pad_y + dy_ * t)
+                b = world_to_screen(cfg.pad_x + dx_ * (t + 1.4),
+                                    pad_y + dy_ * (t + 1.4))
+                pygame.draw.line(self.screen, edge, a, b, 1)
+                t += 3.2
+        t = 4.0
+        while t < 55.0:
+            a = world_to_screen(cfg.pad_x, pad_y + t)
+            b = world_to_screen(cfg.pad_x, pad_y + t + 1.0)
+            pygame.draw.line(self.screen, center, a, b, 1)
+            t += 4.5
+
+    def _dim_ticks(self, p, horizontal):
+        if horizontal:
+            pygame.draw.line(self.screen, THEME.struct,
+                             (p[0], p[1] - 3), (p[0], p[1] + 3), 1)
+        else:
+            pygame.draw.line(self.screen, THEME.struct,
+                             (p[0] - 3, p[1]), (p[0] + 3, p[1]), 1)
+
+    def draw_dimensions(self, env):
+        """Drafting-style live dimension callouts on final approach:
+        the scene annotates its own altitude and lateral offset."""
+        s, cfg = env.state, env.cfg
+        ground = env.terrain.height_at(s[X])
+        base_alt = s[Y] - cfg.L - ground
+        if base_alt > 25.0 or base_alt < 0.5:
+            return
+        label_c = lerp_color(THEME.struct, THEME.signal, 0.3)
+
+        # vertical dimension: base of rocket down to the ground
+        side = 2.5 if s[X] < cfg.world_w - 8 else -4.0
+        ox = s[X] + side
+        a = world_to_screen(ox, ground)
+        b = world_to_screen(ox, s[Y] - cfg.L)
+        pygame.draw.line(self.screen, THEME.struct, a, b, 1)
+        self._dim_ticks(a, False)
+        self._dim_ticks(b, False)
+        self.text(self.f_tiny, f"{base_alt:.1f}", label_c,
+                  a[0] + 6, (a[1] + b[1]) // 2 - 6)
+
+        # lateral dimension: pad centerline to rocket, drawn near the ground
+        dx = s[X] - cfg.pad_x
+        if abs(dx) > 2.0:
+            h = ground + 2.5
+            a2 = world_to_screen(cfg.pad_x, h)
+            b2 = world_to_screen(s[X], h)
+            pygame.draw.line(self.screen, THEME.struct, a2, b2, 1)
+            self._dim_ticks(a2, True)
+            self._dim_ticks(b2, True)
+            self.text(self.f_tiny, f"{dx:+.1f}", label_c,
+                      (a2[0] + b2[0]) // 2 - 12, a2[1] - 16)
 
     def draw_terrain(self, env):
         cfg = env.cfg
@@ -317,8 +420,9 @@ class Console:
                 phosphor.line((ex, ly), (ex + sgn * arm, ly), THEME.signal, 26, 3)
         pygame.draw.line(self.screen, THEME.signal, (cx - 4, ly), (cx + 4, ly), 1)
         pygame.draw.line(self.screen, THEME.signal, (cx, ly - 4), (cx, ly + 4), 1)
+        # callout sits below the ground line, keeping the approach zone clear
         self.text(self.f_lab, f"PAD {2 * cfg.pad_half_w:.0f} M",
-                  THEME.struct, cx + 12, ly - 18)
+                  THEME.struct, cx + 14, min(ly + 6, VIEW_H - 16))
 
     def draw_touchdown_ring(self, env, age):
         """Expanding survey brackets sweeping outward from the pad edges."""
@@ -507,16 +611,22 @@ class Console:
                          (cx + int(bxn * r * 0.9), cy - int(byn * r * 0.9)), 1)
         self.text(self.f_lab, "ATT", THEME.struct, cx - 10, cy + r + 4)
 
-        # velocity vector indicator
+        # Apollo LM cross-pointer: two needles, lateral velocity (vertical
+        # needle, left/right) and vertical velocity (horizontal needle,
+        # up/down). Both needles centered = safe to land.
         cx2 = x0 + 150
         pygame.draw.circle(self.screen, THEME.struct, (cx2, cy), r, 1)
         pygame.draw.line(self.screen, THEME.grid, (cx2 - r, cy), (cx2 + r, cy), 1)
-        vmax = 20.0
-        vx_n = max(-1.0, min(1.0, s[VX] / vmax))
-        vy_n = max(-1.0, min(1.0, s[VY] / vmax))
-        pygame.draw.line(self.screen, THEME.signal, (cx2, cy),
-                         (cx2 + int(vx_n * r), cy - int(vy_n * r)), 1)
-        self.text(self.f_lab, "VEL", THEME.struct, cx2 - 10, cy + r + 4)
+        pygame.draw.line(self.screen, THEME.grid, (cx2, cy - r), (cx2, cy + r), 1)
+        v_full = 10.0  # m/s at full needle deflection
+        nx_off = int(max(-1.0, min(1.0, s[VX] / v_full)) * r * 0.85)
+        ny_off = int(max(-1.0, min(1.0, s[VY] / v_full)) * r * 0.85)
+        span = int(r * 0.8)
+        pygame.draw.line(self.screen, THEME.signal,
+                         (cx2 + nx_off, cy - span), (cx2 + nx_off, cy + span), 1)
+        pygame.draw.line(self.screen, THEME.signal,
+                         (cx2 - span, cy - ny_off), (cx2 + span, cy - ny_off), 1)
+        self.text(self.f_lab, "XPTR", THEME.struct, cx2 - 14, cy + r + 4)
 
         # raycast readout, right of the dials
         rx0 = x0 + 230
@@ -628,7 +738,7 @@ def main():
         fuel_marks = set()
         log.post(0.0, f"GUIDANCE ACTIVE — SEED {seed}")
 
-    show_rays = True
+    show_rays = False  # dimension callouts carry that info now; V re-enables
     new_episode()
 
     running = True
@@ -694,11 +804,14 @@ def main():
                 new_episode()
 
         # ------------------------------------------------------------ render
+        CAMERA.update(env, dt)
         screen.fill(THEME.field)
         console.draw_graticule(env.cfg)
+        console.draw_corridor(env)
         console.draw_terrain(env)
         ph = phosphor if crt_on else None
         console.draw_pad(env, ph)
+        console.draw_dimensions(env)
         console.draw_trail(list(trail))
         if not ended:
             pts, impact = predict_ballistic(env)
