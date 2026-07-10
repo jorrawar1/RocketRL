@@ -22,18 +22,25 @@ unchanged; it's used here for prompt Python 3.14 wheel support.)
 |---|---|
 | `W` | throttle (ramps while held) |
 | `Space` | full throttle (instant) |
-| `A` / `D` | gimbal (ramps, springs back to center) |
+| `A` / `D` | steer — commanded tilt (STAB AUG) or raw gimbal (MANUAL) |
 | `S` | cut throttle instantly |
-| `T` | cycle visual theme (scope amber / blueprint / paper) |
+| `G` | toggle STAB AUG / MANUAL |
+| `C` | toggle CRT effects (phosphor decay + scanlines) |
 | `V` | toggle raycast display |
 | `R` | reset episode |
 | `Esc` | quit |
 
-The keyboard drives a *virtual stick* whose output is the same continuous
+The keyboard drives a *flight computer* whose output is the same continuous
 `[throttle, gimbal]` action an agent would emit — identical env code path
-for human and agent. Goal: touch down on the pad with `|vy| < 2`,
-`|vx| < 1.5`, tilt `< 10°`. Gimbal torque is proportional to thrust — at
-zero throttle you have **no attitude control**. That's the game.
+for human and agent. **STAB AUG** (default) closes an attitude loop: A/D
+command a lean angle, release to auto-level. **MANUAL** is the raw gimbal —
+the exact control problem the RL agent gets. The faint dotted arc is the
+ballistic prediction (where you go if you cut thrust now), with the
+predicted impact point and speed marked.
+
+Goal: touch down on the pad with `|vy| < 2`, `|vx| < 2`, tilt `< 15°`,
+`|ω| < 1`. Gimbal torque is proportional to thrust — at zero throttle you
+have **no attitude control**. That's the game.
 
 ## Conventions (load-bearing)
 
@@ -93,8 +100,9 @@ DEFAULT_CONFIG.dump_json("constants.json")
 Difficulty knobs live in `rocketenv/config.py`: `twr` (2.3 — raised from the
 spec's 1.8 after playtesting showed free-fall recovery felt impossible),
 `phi_max` (10° — lowered from 15° to tame attitude twitchiness),
-`fuel_0` / `burn_rate`, spawn envelope (`spawn_*`), pad width. Stick feel
-(ramp/spring rates) lives at the top of `VirtualStick` in `play.py`. Reward
+`fuel_0` / `burn_rate`, landing thresholds (`land_*`), spawn envelope
+(`spawn_*`), pad width. Control feel (ramp rates, assist gains) lives at the
+top of `FlightComputer` in `play.py`. Reward
 coefficients are all `Config` fields too — tune while watching the live
 reward readout in the harness. A scripted P-controller lands 100/100 seeds
 with the defaults (avg impact ~1.2 m/s, ~20% fuel margin), so the task is

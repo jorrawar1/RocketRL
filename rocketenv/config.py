@@ -44,7 +44,9 @@ class Config:
     # 10 deg (was 15) tames twitchy attitude control at the higher TWR.
     phi_max: float = math.radians(10.0)  # rad, max gimbal deflection
     fuel_0: float = 100.0           # starting fuel
-    burn_rate: float = 12.0         # fuel/s at full throttle
+    # 10 fuel/s = ~23 s at hover throttle: enough slack for a human descent
+    # profile (12 left assisted pilots landing on fumes or short of them).
+    burn_rate: float = 10.0         # fuel/s at full throttle
 
     # --- reserved randomization axes (no-op defaults; Phase 3) --------------
     drag_coeff: float = 0.0         # quadratic drag: F = -c * |v| * v
@@ -87,10 +89,13 @@ class Config:
     att_c_omega: float = 0.03
     att_alt: float = 25.0           # m, penalty fully on below (att_alt - att_fade)
     att_fade: float = 10.0          # m, linear fade band up to att_alt
-    land_vy_max: float = 2.0        # m/s, soft-landing thresholds
-    land_vx_max: float = 1.5
-    land_theta_max: float = math.radians(10.0)
-    land_omega_max: float = 0.5
+    # Soft-landing thresholds. Calibrated against real touchdowns: gentle
+    # on-pad contacts (impact < 2 m/s) were failing only the original
+    # omega < 0.5 / theta < 10 deg limits, which read as unfair.
+    land_vy_max: float = 2.0        # m/s
+    land_vx_max: float = 2.0
+    land_theta_max: float = math.radians(15.0)
+    land_omega_max: float = 1.0     # rad/s
     reward_land: float = 100.0
     reward_fuel_bonus: float = 20.0  # * fuel_frac on soft landing
     reward_crash: float = -100.0
