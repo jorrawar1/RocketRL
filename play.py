@@ -6,6 +6,7 @@ Controls
   A / D       steer (meaning depends on SAS mode)
   S           cut throttle instantly
   G           cycle SAS mode: DAMP -> HOLD -> MANUAL
+  P           cycle pilot: HUMAN -> PD EXPERT -> BC POLICY
   C           toggle CRT effects (phosphor + scanlines)
   V           toggle raycast display
   R           reset episode
@@ -29,6 +30,7 @@ import random
 import sys
 from collections import deque
 from dataclasses import dataclass
+from pathlib import Path
 
 import numpy as np
 import pygame
@@ -38,6 +40,15 @@ from rocketenv.physics import (
     FUEL, OMEGA, THETA, VX, VY, X, Y, body_endpoints, step_dynamics,
 )
 from rocketenv.reward import TIPPED, TOUCHDOWN
+from rocketenv.scripted import scripted_action
+
+# who is flying. HUMAN reads the keyboard; the other two ignore it entirely.
+PILOTS = ("HUMAN", "SCRIPTED", "POLICY")
+PILOT_LABEL = {"SCRIPTED": "PD EXPERT", "POLICY": "BC POLICY"}
+# first of these that exists gets loaded, so re-saving under any of these
+# names just works
+_LEARNING = Path(__file__).resolve().parent / "learning"
+POLICY_CANDIDATES = [_LEARNING / n for n in ("weights", "bc_policy.pt", "policy.pt")]
 
 SCALE = 8                 # px per meter
 VIEW_W, VIEW_H = 800, 800  # world viewport (100 m x 100 m)
@@ -565,7 +576,7 @@ class Console:
             pygame.draw.rect(self.screen, color, (x + 1, y + 1, fill, h - 2))
 
     def draw_panel(self, env, action, ep_reward, t_sim, seed, fuel_out,
-                   charts, log, sas_mode, map_name):
+                   charts, log, pilot_label, map_name):
         cfg, s = env.cfg, env.state
         x0 = VIEW_W + 24
         xr = WIN_W - 24
@@ -573,7 +584,7 @@ class Console:
 
         y = 18
         self.text(self.f_lab, "ROCKET GNC — FLIGHT CONSOLE", THEME.struct, x0, y)
-        self.text(self.f_lab, f"SAS {sas_mode}", THEME.signal, xr, y,
+        self.text(self.f_lab, pilot_label, THEME.signal, xr, y,
                   right_align=True)
         y += 24
 
@@ -701,6 +712,42 @@ def load_map(idx, cfg):
     return terr, pad_x, f"GEN-{idx:02d}"
 
 
+def load_policy(path=None):
+    """Return a callable obs -> action, or None if it can't be loaded.
+
+    torch is imported lazily and inside the try, so the harness still runs
+    for keyboard flying on a machine without torch installed.
+    """
+    try:
+        import torch
+
+        from learning.policy import Policy
+    except ImportError as exc:
+        print(f"[policy] torch or learning.policy unavailable: {exc}")
+        return None
+
+    if path is None:
+        path = next((p for p in POLICY_CANDIDATES if p.exists()), None)
+    if path is None or not path.exists():
+        print(f"[policy] no weights found in {_LEARNING}")
+        return None
+
+    model = Policy()
+    model.load_state_dict(torch.load(path, map_location="cpu"))
+    model.eval()  # no dropout/batchnorm here, but the habit is worth keeping
+
+    def policy_fn(obs):
+        with torch.no_grad():
+            # (13,) -> (1,13) so nn.Linear sees a batch, then back to (2,)
+            a = model(torch.from_numpy(obs).unsqueeze(0))[0].numpy()
+        # clip here as well as in the env, so the on-screen gimbal indicator
+        # shows what the rocket actually did
+        return np.clip(a, [0.0, -1.0], [1.0, 1.0]).astype(np.float32)
+
+    print(f"[policy] loaded {path}")
+    return policy_fn
+
+
 def main():
     # Opt out of Windows DPI virtualization: without this the window is
     # bitmap-stretched at >100% display scaling and all text goes soft.
@@ -735,14 +782,17 @@ def main():
     ignited = False
     fuel_marks: set[int] = set()
     tick = 0
+    pilot = "HUMAN"
+    policy_fn = None
+    obs = None            # the policy's input; the loop used to discard this
 
     def new_episode():
         nonlocal ep_reward, t_sim, ended, end_timer, stamp, trail, seed
-        nonlocal ignited, fuel_marks, landed
+        nonlocal ignited, fuel_marks, landed, obs
         seed += 1
         env.terrain = terrain_obj
         opts = {"pad_x": map_pad} if map_pad is not None else None
-        env.reset(seed=seed, options=opts)
+        obs, _ = env.reset(seed=seed, options=opts)
         fc.reset()
         for c in charts:
             c.reset()
@@ -779,6 +829,14 @@ def main():
                 elif ev.key == pygame.K_g:
                     fc.cycle_mode()
                     log.post(t_sim, f"SAS {fc.mode}")
+                elif ev.key == pygame.K_p:
+                    pilot = PILOTS[(PILOTS.index(pilot) + 1) % len(PILOTS)]
+                    if pilot == "POLICY" and policy_fn is None:
+                        policy_fn = load_policy()
+                        if policy_fn is None:      # nothing to fly with
+                            pilot = "HUMAN"
+                            log.post(t_sim, "NO POLICY WEIGHTS", fault=True)
+                    log.post(t_sim, f"PILOT {PILOT_LABEL.get(pilot, fc.mode)}")
                 elif ev.key in (pygame.K_m, pygame.K_f):
                     map_idx = 0 if ev.key == pygame.K_f else map_idx + 1
                     terrain_obj, map_pad, map_name = load_map(
@@ -787,9 +845,16 @@ def main():
 
         keys = pygame.key.get_pressed()
         if not ended:
-            fc.update(keys, env.state, dt)
-            action = fc.action()
-            _, r, term, trunc, info = env.step(action)
+            if pilot == "SCRIPTED":
+                # the expert cheats: it reads raw state, not the observation
+                action = scripted_action(
+                    env.state, env.cfg, env.terrain).astype(np.float32)
+            elif pilot == "POLICY":
+                action = policy_fn(obs)
+            else:
+                fc.update(keys, env.state, dt)
+                action = fc.action()
+            obs, r, term, trunc, info = env.step(action)
             ep_reward += r
             t_sim += dt
             trail.append((env.state[X], env.state[Y]))
@@ -853,7 +918,8 @@ def main():
             screen.blit(phosphor.surf, (0, 0))
         fuel_out = env.state[FUEL] <= 0.0
         console.draw_panel(env, action, ep_reward, t_sim, seed, fuel_out,
-                           charts, log, fc.mode, map_name)
+                           charts, log,
+                           PILOT_LABEL.get(pilot, f"SAS {fc.mode}"), map_name)
         if ended and stamp:
             console.draw_stamp(*stamp)
         if crt_on:

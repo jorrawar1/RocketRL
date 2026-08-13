@@ -3,3 +3,10 @@ __pycache__/
 *.pyc
 .pytest_cache/
 constants.json
+
+# Jupyter autosaves
+.ipynb_checkpoints/
+
+# generated datasets — reproducible from learning/generate_dataset.py with a seed
+learning/data.npz
+learning/_smoke*.npz
