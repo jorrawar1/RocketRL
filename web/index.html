@@ -1,0 +1,108 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <title>SAMPLE RETURN · CRATER MISSION</title>
+  </head>
+  <body>
+    <canvas id="world"></canvas>
+
+    <div class="hud">
+      <header class="hud__top">
+        <div class="meta">
+          <span class="kv"><i>MODE</i><b id="hdr-mode">REPLAY</b></span>
+          <button class="kv meta-button" id="seed-control" type="button" title="Generate new terrain and payload"><i>SEED</i><b id="hdr-seed">—</b></button>
+          <span class="kv"><i>PILOT</i><b id="hdr-pilot">—</b></span>
+          <span class="kv"><i>OUTCOME</i><b id="hdr-outcome">—</b></span>
+        </div>
+      </header>
+
+      <aside class="hud__rail">
+        <div class="group">
+          <h2>FLIGHT</h2>
+          <div class="readout" id="readout-flight"></div>
+        </div>
+        <div class="group">
+          <h2>PAYLOAD</h2>
+          <div class="readout" id="readout-payload"></div>
+        </div>
+
+      </aside>
+
+      <section class="hud__feed">
+        <div class="feed" id="feed"></div>
+      </section>
+
+      <section class="hud__net" id="net" aria-label="Neural network activations">
+        <header class="policy-head">
+          <h2>NEURAL NETWORK ACTIVATIONS</h2>
+          <div class="policy-legend" aria-label="Activation legend">
+            <span><i class="is-negative"></i>−</span>
+            <span><i class="is-positive"></i>+</span>
+          </div>
+        </header>
+        <div class="policy-inspector">
+          <section class="policy-inputs" aria-label="Policy observations">
+            <h3>INPUTS</h3>
+            <div id="policy-inputs"></div>
+          </section>
+          <section class="policy-core" aria-label="Policy hidden activations">
+            <canvas id="activations"></canvas>
+          </section>
+          <section class="policy-actions" id="policy-actions" aria-label="Policy action distributions">
+            <h3>ACTION DISTRIBUTIONS</h3>
+            <article class="policy-action" data-action="throttle">
+              <header><span>THROTTLE</span><strong data-field="command">—</strong></header>
+              <div class="policy-gaussian" aria-label="Throttle Gaussian distribution">
+                <span class="policy-gaussian__axis"></span>
+                <span class="policy-gaussian__band"></span>
+                <span class="policy-gaussian__mean" title="Mean"></span>
+                <span class="policy-gaussian__sample" title="Sample"></span>
+              </div>
+              <dl>
+                <div><dt>MEAN μ</dt><dd data-field="mean">—</dd></div>
+                <div><dt>STD σ</dt><dd data-field="std">—</dd></div>
+                <div><dt>NOISE ε</dt><dd data-field="noise">—</dd></div>
+                <div><dt>LATENT z</dt><dd data-field="latent">—</dd></div>
+              </dl>
+            </article>
+            <article class="policy-action" data-action="gimbal">
+              <header><span>GIMBAL</span><strong data-field="command">—</strong></header>
+              <div class="policy-gaussian" aria-label="Gimbal Gaussian distribution">
+                <span class="policy-gaussian__axis"></span>
+                <span class="policy-gaussian__band"></span>
+                <span class="policy-gaussian__mean" title="Mean"></span>
+                <span class="policy-gaussian__sample" title="Sample"></span>
+              </div>
+              <dl>
+                <div><dt>MEAN μ</dt><dd data-field="mean">—</dd></div>
+                <div><dt>STD σ</dt><dd data-field="std">—</dd></div>
+                <div><dt>NOISE ε</dt><dd data-field="noise">—</dd></div>
+                <div><dt>LATENT z</dt><dd data-field="latent">—</dd></div>
+              </dl>
+            </article>
+          </section>
+        </div>
+      </section>
+
+      <section class="hud__foot" id="hud-foot">
+        <nav class="controls" aria-label="Mission controls">
+          <button id="control-policy" type="button" aria-pressed="true">PPO POLICY</button>
+          <button id="control-human" type="button" aria-pressed="false">TRY IT YOURSELF</button>
+          <span class="controls__divider" aria-hidden="true"></span>
+          <button id="control-restart" class="is-command" type="button">↻ RESTART</button>
+          <button id="control-seed" class="is-command" type="button">＋ NEW TERRAIN + PAYLOAD</button>
+          <button id="control-net" type="button" aria-pressed="true">POLICY NETWORK</button>
+        </nav>
+        <div class="statusline" id="statusline" hidden>
+          <span id="status-left"></span>
+        </div>
+      </section>
+    </div>
+
+    <section class="packet" id="packet" hidden><pre id="packet-body"></pre></section>
+
+    <script type="module" src="/src/main.ts"></script>
+  </body>
+</html>

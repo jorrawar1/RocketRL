@@ -1,0 +1,32 @@
+{
+  "schema_version": 1,
+  "checkpoint": "ppo_sample_return_no_floor_finetune.pt",
+  "checkpoint_training_mode": "no_floor_full_mission_finetune_v1",
+  "checkpoint_update": 20,
+  "model_sha256": "66fd0ce37fa8665d774ebb36c9a7af1759baef51e1c809ae52dbcdbe431fae82",
+  "actor_observation_dim": 16,
+  "observation_names": [
+    "target_dx",
+    "target_dy",
+    "velocity_x",
+    "velocity_y",
+    "sin_theta",
+    "cos_theta",
+    "angular_velocity",
+    "fuel_fraction",
+    "terrain_ray_0",
+    "terrain_ray_1",
+    "terrain_ray_2",
+    "terrain_ray_3",
+    "terrain_ray_4",
+    "payload_attached",
+    "phase_outbound",
+    "phase_return"
+  ],
+  "hidden_width": 128,
+  "action_dim": 2,
+  "action_repeat": 4,
+  "action_sampling": "latent=mean+std*N(0,1); throttle=(tanh(latent[0])+1)/2; gimbal=tanh(latent[1])",
+  "std_source": "raw exp(clamp(log_std,max=1)) before the training exploration floor",
+  "memory_reset": "episode boundary and auto-advanced sampling handoff"
+}
