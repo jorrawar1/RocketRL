@@ -1,4 +1,5 @@
 numpy
-pygame-ce
 gymnasium
+torch
+onnx
 pytest

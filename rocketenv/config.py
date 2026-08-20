@@ -1,14 +1,10 @@
 """All physics/episode/reward constants in one place — the single source of truth.
 
-Every quantity a later phase varies (gravity, drag, wind, thrust multiplier,
-pad, spawn envelope, ...) lives here and can be overridden per-episode via
-``RocketEnv.reset(options={...})``.  ``dump_json`` exports the exact numbers so
-the future TypeScript port imports the same constants and the two physics
-implementations can't silently drift.
+Shared dynamics constants live here. ``dump_json`` exports the exact values so
+the Python simulator and browser implementation cannot silently drift.
 
 Coordinate & sign conventions (load-bearing — see also physics.py):
   * World is y-up.  Ground at y = 0, gravity pulls toward -y.
-    pygame renders y-down; the flip happens ONLY at render time (play.py).
   * theta = tilt from vertical, radians, positive counter-clockwise.
     theta = 0 means the rocket points straight up.
   * Nose (body-up) direction in world frame: n = (-sin(theta), cos(theta)).

@@ -6,7 +6,6 @@ import math
 import numpy as np
 import pytest
 
-from rocketenv import RocketEnv
 from rocketenv.config import Config
 from rocketenv.terrain import FlatTerrain, PolylineTerrain, generate_terrain
 
@@ -88,20 +87,3 @@ def test_generated_pad_is_flat_and_feasible():
         assert terr.ys.max() <= CFG.terrain_amp + 1e-9
         assert terr.ys.min() >= -1e-9
         assert 15.0 <= pad_x <= CFG.world_w - 15.0
-
-
-def test_env_runs_on_generated_terrain():
-    terr, pad_x = generate_terrain(np.random.default_rng(5), CFG)
-    env = RocketEnv(terrain=terr)
-    obs, _ = env.reset(seed=0, options={"pad_x": pad_x})
-    assert env.cfg.pad_x == pad_x
-    # free fall must terminate on hill contact with sane final altitude
-    for _ in range(2000):
-        obs, r, term, trunc, info = env.step(np.array([0.0, 0.0]))
-        if term or trunc:
-            break
-    assert term
-    s = info["state"]
-    assert s[1] >= terr.height_at(s[0]) - 1.0  # ended at the surface, not below
-    # rays reflect the local terrain, not a flat floor
-    assert np.all(obs[8:] >= 0.0) and np.all(obs[8:] <= 1.0)

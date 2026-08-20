@@ -407,7 +407,7 @@ export class WorldRenderer {
       ctx.fillStyle = alpha(p.amber, frame.payload_mass > 0 ? 0.75 : 0.45);
       ctx.fill();
     } else {
-      // Empty pod gets a struck-through diagonal, as in the pygame harness.
+      // Empty pod gets a struck-through diagonal.
       ctx.strokeStyle = p.faint;
       ctx.lineWidth = 1;
       ctx.beginPath();

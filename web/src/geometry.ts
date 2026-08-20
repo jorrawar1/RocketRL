@@ -55,7 +55,7 @@ export function plumeDirection(frame: Frame): Vec2 {
 }
 
 /**
- * Point on the hull, addressed the way the pygame renderer does it:
+ * Point on the hull in body-local coordinates:
  * `along` measured up from the base, `across` measured to body-right.
  */
 export function bodyPoint(

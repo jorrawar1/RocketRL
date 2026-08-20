@@ -1,4 +1,4 @@
-/** Mirror of rocketenv/sample_return/serialization.py, schema_version 1. */
+/** Browser mission and policy data contract, schema version 1. */
 
 export const SCHEMA_VERSION = 1;
 
@@ -74,6 +74,5 @@ export const DT = 1 / 60;
 export const PHI_MAX = (10 * Math.PI) / 180;
 export const WORLD_W = 220;
 export const WORLD_H = 140;
-/** Hull half-width and landing-leg span, matching the pygame silhouette. */
+/** Half-width of the simple rectangular hull. */
 export const BODY_HALF_W = 0.5;
-export const LEG_HALF_W = 1.5;

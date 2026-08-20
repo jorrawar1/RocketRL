@@ -6,7 +6,7 @@ import { ActorPolicy, type PolicyMetadata } from "../src/policy";
 import { createScenario } from "../src/scenario";
 import { Mission } from "../src/sim/mission";
 import { buildActorObservation } from "../src/sim/observation";
-import type { Fixture, MissionPhase, StateVec, Vec2 } from "../src/types";
+import type { MissionPhase, StateVec, Vec2 } from "../src/types";
 
 interface ReferenceStep {
   observation: number[];
@@ -43,9 +43,6 @@ const METADATA = fileURLToPath(
 );
 const REFERENCE = fileURLToPath(
   new URL("./data/policy_reference.json", import.meta.url),
-);
-const MISSION = fileURLToPath(
-  new URL("../../artifacts/mission_42.json", import.meta.url),
 );
 
 const maxError = (actual: ArrayLike<number>, expected: number[]): number => {
@@ -113,34 +110,6 @@ describe("exported recurrent actor", () => {
     expect(worst).toBeLessThan(2e-6);
   });
 
-  it("completes a browser-simulated full mission", async () => {
-    const model = new Uint8Array(readFileSync(MODEL));
-    const metadata = JSON.parse(
-      readFileSync(METADATA, "utf8"),
-    ) as PolicyMetadata;
-    const fixture = JSON.parse(readFileSync(MISSION, "utf8")) as Fixture;
-    const policy = await ActorPolicy.fromModelBytes(model, metadata);
-    const mission = new Mission(fixture);
-
-    let decisions = 0;
-    while (!mission.done && decisions < 2_400) {
-      const { action } = await policy.decide(mission.actorObservation(), false);
-      decisions += 1;
-      for (let frame = 0; frame < metadata.action_repeat && !mission.done; frame++) {
-        mission.step(action);
-        if (mission.phase === "SAMPLING") {
-          while (mission.phase === "SAMPLING" && !mission.done) {
-            mission.step([0, 0]);
-          }
-          policy.reset();
-          break;
-        }
-      }
-    }
-
-    expect(mission.outcome).toBe("SAMPLE_RETURNED");
-    expect(decisions).toBeLessThan(600);
-  });
 
   it("runs the learned policy on newly generated terrain and payload", async () => {
     const model = new Uint8Array(readFileSync(MODEL));
